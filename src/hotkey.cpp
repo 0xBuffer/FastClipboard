@@ -7,9 +7,10 @@ static HWND g_hAppWnd = NULL;
 static HWND g_LastForegroundWnd = NULL;
 static POINT g_LastCursorPos = { 0, 0 };
 
-static bool g_WinVTriggered = false;
 static ULONGLONG g_LAltDownTick = 0;
 static bool g_LAltOtherKeyPressed = false;
+static ULONGLONG g_LastShiftTick = 0;
+static ULONGLONG g_LastCtrlTick = 0;
 
 static void TriggerOpen() {
     g_LastForegroundWnd = GetForegroundWindow();
@@ -23,6 +24,22 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
     if (nCode == HC_ACTION) {
         KBDLLHOOKSTRUCT* pKey = (KBDLLHOOKSTRUCT*)lParam;
 
+        if (pKey->flags & LLKHF_INJECTED) {
+            return CallNextHookEx(g_hHook, nCode, wParam, lParam);
+        }
+
+        ULONGLONG now = GetTickCount64();
+
+        if (pKey->vkCode == VK_SHIFT || pKey->vkCode == VK_LSHIFT || pKey->vkCode == VK_RSHIFT) {
+            g_LastShiftTick = now;
+            g_LAltOtherKeyPressed = true;
+        }
+
+        if (pKey->vkCode == VK_CONTROL || pKey->vkCode == VK_LCONTROL || pKey->vkCode == VK_RCONTROL) {
+            g_LastCtrlTick = now;
+            g_LAltOtherKeyPressed = true;
+        }
+
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
             if (pKey->vkCode != VK_LMENU && pKey->vkCode != VK_RMENU && pKey->vkCode != VK_MENU) {
                 g_LAltOtherKeyPressed = true;
@@ -35,7 +52,6 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
                 bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 
                 if (winDown && !ctrlDown && !laltDown) {
-                    g_WinVTriggered = true;
                     keybd_event(0xE8, 0, 0, 0);
                     keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
                     TriggerOpen();
@@ -49,31 +65,42 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
             }
 
             if (pKey->vkCode == VK_LMENU) {
+                bool shiftRecently = (now - g_LastShiftTick < 500);
+                bool shiftDown = ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) ||
+                                 ((GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0) ||
+                                 ((GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0);
+                bool ctrlRecently = (now - g_LastCtrlTick < 500);
+                bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
                 if (g_LAltDownTick == 0) {
-                    g_LAltDownTick = GetTickCount64();
-                    g_LAltOtherKeyPressed = false;
+                    g_LAltDownTick = now;
+                    g_LAltOtherKeyPressed = (shiftRecently || shiftDown || ctrlRecently || ctrlDown);
+                } else {
+                    if (shiftRecently || shiftDown || ctrlRecently || ctrlDown) {
+                        g_LAltOtherKeyPressed = true;
+                    }
                 }
             }
         } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
-            if (pKey->vkCode == VK_LWIN || pKey->vkCode == VK_RWIN) {
-                if (g_WinVTriggered) {
-                    g_WinVTriggered = false;
-                    keybd_event(0xE8, 0, 0, 0);
-                    keybd_event(0xE8, 0, KEYEVENTF_KEYUP, 0);
-                    return 1;
-                }
-            }
-
             if (pKey->vkCode == VK_LMENU) {
-                if (!g_LAltOtherKeyPressed && g_LAltDownTick > 0) {
-                    ULONGLONG duration = GetTickCount64() - g_LAltDownTick;
-                    g_LAltDownTick = 0;
-                    if (duration <= 450) {
+                bool shiftRecently = (now - g_LastShiftTick < 500);
+                bool shiftDown = ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) ||
+                                 ((GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0) ||
+                                 ((GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0);
+                bool ctrlRecently = (now - g_LastCtrlTick < 500);
+                bool ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                bool winDown = ((GetAsyncKeyState(VK_LWIN) & 0x8000) != 0) ||
+                               ((GetAsyncKeyState(VK_RWIN) & 0x8000) != 0);
+
+                if (!g_LAltOtherKeyPressed && !shiftRecently && !shiftDown &&
+                    !ctrlRecently && !ctrlDown && !winDown && g_LAltDownTick > 0) {
+                    ULONGLONG duration = now - g_LAltDownTick;
+                    if (duration >= 40 && duration <= 450) {
                         TriggerOpen();
-                        return 1;
                     }
                 }
                 g_LAltDownTick = 0;
+                g_LAltOtherKeyPressed = false;
             }
         }
     }

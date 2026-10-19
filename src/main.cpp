@@ -229,6 +229,13 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd) {
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 static void ShowClipboardWindow() {
+    keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_RWIN, 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_LMENU, 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_RMENU, 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+    keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0);
+
     POINT pt = { 0, 0 };
     hotkey::DetectTargetAndPosition(g_TargetWnd, pt, WINDOW_WIDTH, WINDOW_HEIGHT);
 
