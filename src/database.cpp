@@ -63,6 +63,13 @@ bool Database::Init(const std::string& dbPath) {
     }
 
     sqlite3_exec(m_db, "ALTER TABLE items ADD COLUMN is_masked INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
+    sqlite3_exec(m_db, 
+        "DELETE FROM items WHERE id IN ("
+        "  SELECT i1.id FROM items i1 "
+        "  JOIN items i2 ON i1.id > i2.id "
+        "  AND i1.type = 'image' AND i2.type = 'image' "
+        "  AND ABS(i1.created_at - i2.created_at) <= 2"
+        ");", nullptr, nullptr, nullptr);
 
     return true;
 }

@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <filesystem>
+#include <cmath>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -16,6 +17,22 @@ namespace fs = std::filesystem;
 namespace clipboard {
 
 static bool g_IgnoreNextUpdate = false;
+static uint64_t g_LastImageHash = 0;
+static ULONGLONG g_LastImageTick = 0;
+static int g_LastImageWidth = 0;
+static int g_LastImageHeight = 0;
+static size_t g_LastDibSize = 0;
+static DWORD g_LastClipboardSeq = 0;
+
+static uint64_t HashMemory(const void* data, size_t size) {
+    const uint8_t* p = (const uint8_t*)data;
+    uint64_t h = 14695981039346656037ULL;
+    for (size_t i = 0; i < size; ++i) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
 
 std::wstring Utf8ToUtf16(const std::string& utf8) {
     if (utf8.empty()) return std::wstring();
@@ -111,6 +128,11 @@ void OnClipboardUpdate(HWND hWnd) {
         return;
     }
 
+    DWORD seq = GetClipboardSequenceNumber();
+    if (seq != 0 && seq == g_LastClipboardSeq) {
+        return;
+    }
+
     if (!OpenClipboard(hWnd)) {
         return;
     }
@@ -133,6 +155,7 @@ void OnClipboardUpdate(HWND hWnd) {
                     if (!hasLast || lastText != utf8) {
                         std::string preview = CreatePreview(trimmed);
                         Database::Instance().AddItem("text", utf8, preview, 0, 0);
+                        g_LastClipboardSeq = seq;
                     }
                 }
             }
@@ -142,7 +165,21 @@ void OnClipboardUpdate(HWND hWnd) {
         if (hData) {
             void* pDib = GlobalLock(hData);
             size_t dibSize = GlobalSize(hData);
-            if (pDib && dibSize > 0) {
+            if (pDib && dibSize >= sizeof(BITMAPINFOHEADER)) {
+                const BITMAPINFOHEADER* bmih = (const BITMAPINFOHEADER*)pDib;
+                int width = bmih->biWidth;
+                int height = std::abs(bmih->biHeight);
+
+                uint64_t imgHash = HashMemory(pDib, dibSize);
+                ULONGLONG nowTick = GetTickCount64();
+
+                if (imgHash == g_LastImageHash || 
+                    (width == g_LastImageWidth && height == g_LastImageHeight && dibSize == g_LastDibSize && (nowTick - g_LastImageTick < 2500))) {
+                    GlobalUnlock(hData);
+                    CloseClipboard();
+                    return;
+                }
+
                 auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
                 std::string filename = "clip_" + std::to_string(nowMs) + ".png";
@@ -150,7 +187,15 @@ void OnClipboardUpdate(HWND hWnd) {
 
                 if (SaveDibToPng(pDib, dibSize, outPath.string())) {
                     Database::Instance().AddItem("image", outPath.string(), "[Image]", 0, 0);
+                    g_LastImageHash = imgHash;
+                    g_LastImageTick = nowTick;
+                    g_LastImageWidth = width;
+                    g_LastImageHeight = height;
+                    g_LastDibSize = dibSize;
+                    g_LastClipboardSeq = seq;
                 }
+                GlobalUnlock(hData);
+            } else if (pDib) {
                 GlobalUnlock(hData);
             }
         }
