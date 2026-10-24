@@ -8,6 +8,7 @@ namespace hotkey {
 
 bool InstallHook(HWND hWnd);
 void UninstallHook();
+void EnsureHookActive();
 void DetectTargetAndPosition(HWND& outTargetWnd, POINT& outPos, int winWidth, int winHeight);
 
 }

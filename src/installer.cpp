@@ -95,12 +95,28 @@ static bool ExecuteHiddenCommand(const std::string& cmd) {
     cmdVec.push_back('\0');
 
     if (CreateProcessA(NULL, cmdVec.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 5000);
+        WaitForSingleObject(pi.hProcess, 8000);
         DWORD exitCode = 1;
         GetExitCodeProcess(pi.hProcess, &exitCode);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         return (exitCode == 0);
+    }
+    return false;
+}
+
+static bool SetRegistryAutoRun(bool enable) {
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        if (enable) {
+            std::string exe = GetCurrentExecutablePath();
+            std::string val = "\"" + exe + "\"";
+            RegSetValueExA(hKey, "FastClipboard", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)(val.size() + 1));
+        } else {
+            RegDeleteValueA(hKey, "FastClipboard");
+        }
+        RegCloseKey(hKey);
+        return true;
     }
     return false;
 }
@@ -112,11 +128,24 @@ bool IsScheduledTaskInstalled() {
 
 bool InstallScheduledTask() {
     std::string exe = GetCurrentExecutablePath();
-    std::string cmd = "schtasks.exe /create /tn \"FastClipboard\" /tr \"\\\"" + exe + "\\\"\" /sc onlogon /f";
-    return ExecuteHiddenCommand(cmd);
+    SetRegistryAutoRun(true);
+
+    std::string psCmd = "powershell.exe -WindowStyle Hidden -NoProfile -Command \""
+        "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+        "$a = New-ScheduledTaskAction -Execute '" + exe + "'; "
+        "$t = New-ScheduledTaskTrigger -AtLogOn; "
+        "Register-ScheduledTask -TaskName 'FastClipboard' -Action $a -Trigger $t -Settings $s -Force\"";
+
+    bool ok = ExecuteHiddenCommand(psCmd);
+    if (!ok) {
+        std::string fallbackCmd = "schtasks.exe /create /tn \"FastClipboard\" /tr \"\\\"" + exe + "\\\"\" /sc onlogon /f";
+        ok = ExecuteHiddenCommand(fallbackCmd);
+    }
+    return ok;
 }
 
 bool RemoveScheduledTask() {
+    SetRegistryAutoRun(false);
     std::string cmd = "schtasks.exe /delete /tn \"FastClipboard\" /f";
     return ExecuteHiddenCommand(cmd);
 }

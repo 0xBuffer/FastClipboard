@@ -148,28 +148,42 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     VkSemaphore image_acquired_semaphore  = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
     VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
     VkResult err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
-    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
+    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR || err == VK_ERROR_SURFACE_LOST_KHR) {
         g_SwapChainRebuild = true;
-    if (err == VK_ERROR_OUT_OF_DATE_KHR)
         return;
-    if (err != VK_SUBOPTIMAL_KHR)
-        check_vk_result(err);
+    }
+    if (err != VK_SUCCESS) {
+        g_SwapChainRebuild = true;
+        return;
+    }
 
     ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
     {
         err = vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
         err = vkResetFences(g_Device, 1, &fd->Fence);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
     }
     {
         err = vkResetCommandPool(g_Device, fd->CommandPool, 0);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
         VkCommandBufferBeginInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         err = vkBeginCommandBuffer(fd->CommandBuffer, &info);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
     }
     {
         VkRenderPassBeginInfo info = {};
@@ -199,9 +213,15 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
         info.pSignalSemaphores = &render_complete_semaphore;
 
         err = vkEndCommandBuffer(fd->CommandBuffer);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
         err = vkQueueSubmit(g_Queue, 1, &info, fd->Fence);
-        check_vk_result(err);
+        if (err != VK_SUCCESS) {
+            g_SwapChainRebuild = true;
+            return;
+        }
     }
 }
 
@@ -217,18 +237,23 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd) {
     info.pSwapchains = &wd->Swapchain;
     info.pImageIndices = &wd->FrameIndex;
     VkResult err = vkQueuePresentKHR(g_Queue, &info);
-    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
+    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR || err == VK_ERROR_SURFACE_LOST_KHR) {
         g_SwapChainRebuild = true;
-    if (err == VK_ERROR_OUT_OF_DATE_KHR)
         return;
-    if (err != VK_SUBOPTIMAL_KHR)
-        check_vk_result(err);
+    }
+    if (err != VK_SUCCESS) {
+        g_SwapChainRebuild = true;
+        return;
+    }
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
 }
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 static void ShowClipboardWindow() {
+    hotkey::EnsureHookActive();
+    g_SwapChainRebuild = true;
+
     keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0);
     keybd_event(VK_RWIN, 0, KEYEVENTF_KEYUP, 0);
     keybd_event(VK_LMENU, 0, KEYEVENTF_KEYUP, 0);
@@ -326,7 +351,14 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
 
+    case WM_TIMER:
+        if (wParam == 1001) {
+            hotkey::EnsureHookActive();
+        }
+        return 0;
+
     case WM_DESTROY:
+        KillTimer(hWnd, 1001);
         PostQuitMessage(0);
         return 0;
     }
@@ -345,6 +377,8 @@ int main(int, char**) {
         }
         return 0;
     }
+
+    RegisterApplicationRestart(L"", 0);
 
     ImGui_ImplWin32_EnableDpiAwareness();
 
@@ -368,6 +402,8 @@ int main(int, char**) {
         initX, initY, WINDOW_WIDTH, WINDOW_HEIGHT,
         nullptr, nullptr, wc.hInstance, nullptr
     );
+
+    SetTimer(g_hWnd, 1001, 30000, nullptr);
 
     #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
     #define DWMWA_WINDOW_CORNER_PREFERENCE 33
@@ -526,6 +562,24 @@ int main(int, char**) {
         if (App::Instance().ShouldClose()) {
             HideClipboardWindow();
             continue;
+        }
+
+        if (g_SwapChainRebuild) {
+            int fb_width = WINDOW_WIDTH;
+            int fb_height = WINDOW_HEIGHT;
+            RECT rect;
+            if (GetClientRect(g_hWnd, &rect)) {
+                fb_width = rect.right - rect.left;
+                fb_height = rect.bottom - rect.top;
+            }
+            if (fb_width > 0 && fb_height > 0) {
+                ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
+                ImGui_ImplVulkanH_CreateOrResizeWindow(
+                    g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData,
+                    g_QueueFamily, g_Allocator, fb_width, fb_height, g_MinImageCount, 0);
+                g_MainWindowData.FrameIndex = 0;
+                g_SwapChainRebuild = false;
+            }
         }
 
         ImGui_ImplVulkan_NewFrame();

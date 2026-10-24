@@ -123,6 +123,15 @@ void UninstallHook() {
     g_hAppWnd = NULL;
 }
 
+void EnsureHookActive() {
+    if (!g_hAppWnd || !IsWindow(g_hAppWnd)) return;
+    if (g_hHook) {
+        UnhookWindowsHookEx(g_hHook);
+        g_hHook = NULL;
+    }
+    g_hHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+}
+
 void DetectTargetAndPosition(HWND& outTargetWnd, POINT& outPos, int winWidth, int winHeight) {
     if (g_LastForegroundWnd && IsWindow(g_LastForegroundWnd) && g_LastForegroundWnd != g_hAppWnd) {
         outTargetWnd = g_LastForegroundWnd;
