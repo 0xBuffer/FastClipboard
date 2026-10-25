@@ -16,6 +16,7 @@ struct CachedTexture {
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     int width = 0;
     int height = 0;
+    uint64_t lastUsedFrame = 0;
 };
 
 static VkDevice g_Device = VK_NULL_HANDLE;
@@ -26,7 +27,8 @@ static VkCommandPool g_CommandPool = VK_NULL_HANDLE;
 
 static std::unordered_map<std::string, CachedTexture> g_Cache;
 static std::vector<std::string> g_LruKeys;
-static const size_t MAX_CACHED_TEXTURES = 32;
+static const size_t MAX_CACHED_TEXTURES = 128;
+static uint64_t g_CurrentFrame = 1;
 
 static uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memProperties;
@@ -52,7 +54,14 @@ void Init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue queue, uint3
     vkCreateCommandPool(g_Device, &poolInfo, nullptr, &g_CommandPool);
 }
 
+void NewFrame() {
+    g_CurrentFrame++;
+}
+
 static void FreeTexture(CachedTexture& tex) {
+    if (g_Device) {
+        vkDeviceWaitIdle(g_Device);
+    }
     if (tex.descriptorSet) {
         ImGui_ImplVulkan_RemoveTexture(tex.descriptorSet);
         tex.descriptorSet = VK_NULL_HANDLE;
@@ -91,13 +100,18 @@ static VkCommandBuffer BeginSingleTimeCommands() {
     allocInfo.commandPool = g_CommandPool;
     allocInfo.commandBufferCount = 1;
 
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(g_Device, &allocInfo, &commandBuffer);
+    VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(g_Device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
 
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        vkFreeCommandBuffers(g_Device, g_CommandPool, 1, &commandBuffer);
+        return VK_NULL_HANDLE;
+    }
 
     return commandBuffer;
 }
@@ -136,6 +150,7 @@ static std::vector<unsigned char> DownscaleImage(const unsigned char* src, int s
 ImTextureID GetOrCreateTexture(const std::string& imagePath, int& outWidth, int& outHeight) {
     auto it = g_Cache.find(imagePath);
     if (it != g_Cache.end()) {
+        it->second.lastUsedFrame = g_CurrentFrame;
         outWidth = it->second.width;
         outHeight = it->second.height;
 
@@ -177,12 +192,19 @@ ImTextureID GetOrCreateTexture(const std::string& imagePath, int& outWidth, int&
     }
 
     while (g_Cache.size() >= MAX_CACHED_TEXTURES && !g_LruKeys.empty()) {
-        std::string oldestKey = g_LruKeys.front();
-        g_LruKeys.erase(g_LruKeys.begin());
-        auto oldIt = g_Cache.find(oldestKey);
-        if (oldIt != g_Cache.end()) {
-            FreeTexture(oldIt->second);
-            g_Cache.erase(oldIt);
+        bool evicted = false;
+        for (auto lruIt = g_LruKeys.begin(); lruIt != g_LruKeys.end(); ++lruIt) {
+            auto cacheIt = g_Cache.find(*lruIt);
+            if (cacheIt != g_Cache.end() && cacheIt->second.lastUsedFrame < g_CurrentFrame) {
+                FreeTexture(cacheIt->second);
+                g_Cache.erase(cacheIt);
+                g_LruKeys.erase(lruIt);
+                evicted = true;
+                break;
+            }
+        }
+        if (!evicted) {
+            break;
         }
     }
 
@@ -266,6 +288,12 @@ ImTextureID GetOrCreateTexture(const std::string& imagePath, int& outWidth, int&
 
     {
         VkCommandBuffer cmd = BeginSingleTimeCommands();
+        if (!cmd) {
+            vkDestroyBuffer(g_Device, stagingBuffer, nullptr);
+            vkFreeMemory(g_Device, stagingBufferMemory, nullptr);
+            FreeTexture(tex);
+            return 0;
+        }
 
         VkImageMemoryBarrier barrier = {};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -328,6 +356,7 @@ ImTextureID GetOrCreateTexture(const std::string& imagePath, int& outWidth, int&
         return 0;
     }
 
+    tex.lastUsedFrame = g_CurrentFrame;
     g_Cache[imagePath] = tex;
     g_LruKeys.push_back(imagePath);
     outWidth = width;

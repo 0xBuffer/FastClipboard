@@ -453,6 +453,8 @@ void App::RenderItemsList() {
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     float availW = ImGui::GetContentRegionAvail().x;
+    float viewMinY = ImGui::GetWindowPos().y;
+    float viewMaxY = viewMinY + ImGui::GetWindowHeight();
 
     for (size_t i = 0; i < m_items.size(); ++i) {
         const auto& item = m_items[i];
@@ -464,6 +466,13 @@ void App::RenderItemsList() {
 
         float cardH = isImage ? 90.0f : (isExpanded ? 172.0f : 76.0f);
         ImVec2 curPos = ImGui::GetCursorScreenPos();
+
+        if (m_contextMenuItemId != item.id && (curPos.y + cardH < viewMinY - 100.0f || curPos.y > viewMaxY + 100.0f)) {
+            ImGui::Dummy(ImVec2(availW, cardH));
+            ImGui::Spacing();
+            ImGui::PopID();
+            continue;
+        }
 
         float dotZoneW = 30.0f;
         float mainZoneW = availW - dotZoneW - 2.0f;

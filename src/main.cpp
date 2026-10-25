@@ -251,7 +251,6 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 static void ShowClipboardWindow() {
     hotkey::EnsureHookActive();
-    g_SwapChainRebuild = true;
 
     keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0);
     keybd_event(VK_RWIN, 0, KEYEVENTF_KEYUP, 0);
@@ -309,10 +308,15 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             if (fb_width > 0 && fb_height > 0 &&
                 (g_SwapChainRebuild || g_MainWindowData.Width != fb_width || g_MainWindowData.Height != fb_height)) {
+                vkDeviceWaitIdle(g_Device);
                 ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
                 ImGui_ImplVulkanH_CreateOrResizeWindow(
                     g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData,
                     g_QueueFamily, g_Allocator, fb_width, fb_height, g_MinImageCount, 0);
+                ImGui_ImplVulkan_PipelineInfo pipeInfo = {};
+                pipeInfo.RenderPass = g_MainWindowData.RenderPass;
+                pipeInfo.Subpass = 0;
+                ImGui_ImplVulkan_CreateMainPipeline(&pipeInfo);
                 g_MainWindowData.FrameIndex = 0;
                 g_SwapChainRebuild = false;
             }
@@ -572,15 +576,21 @@ int main(int, char**) {
                 fb_height = rect.bottom - rect.top;
             }
             if (fb_width > 0 && fb_height > 0) {
+                vkDeviceWaitIdle(g_Device);
                 ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
                 ImGui_ImplVulkanH_CreateOrResizeWindow(
                     g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData,
                     g_QueueFamily, g_Allocator, fb_width, fb_height, g_MinImageCount, 0);
+                ImGui_ImplVulkan_PipelineInfo pipeInfo = {};
+                pipeInfo.RenderPass = g_MainWindowData.RenderPass;
+                pipeInfo.Subpass = 0;
+                ImGui_ImplVulkan_CreateMainPipeline(&pipeInfo);
                 g_MainWindowData.FrameIndex = 0;
                 g_SwapChainRebuild = false;
             }
         }
 
+        vk_texture::NewFrame();
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
