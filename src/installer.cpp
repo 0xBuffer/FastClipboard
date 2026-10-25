@@ -131,7 +131,7 @@ bool InstallScheduledTask() {
     SetRegistryAutoRun(true);
 
     std::string psCmd = "powershell.exe -WindowStyle Hidden -NoProfile -Command \""
-        "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+        "$s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1); "
         "$a = New-ScheduledTaskAction -Execute '" + exe + "'; "
         "$t = New-ScheduledTaskTrigger -AtLogOn; "
         "Register-ScheduledTask -TaskName 'FastClipboard' -Action $a -Trigger $t -Settings $s -Force\"";

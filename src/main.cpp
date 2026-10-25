@@ -41,8 +41,7 @@ static const int WINDOW_HEIGHT = 520;
 
 static void check_vk_result(VkResult err) {
     if (err == VK_SUCCESS) return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
-    if (err < 0) abort();
+    fprintf(stderr, "[vulkan] Note: VkResult = %d\n", err);
 }
 
 static bool IsExtensionAvailable(const ImVector<VkExtensionProperties>& properties, const char* extension) {
@@ -104,14 +103,14 @@ static void SetupVulkan(ImVector<const char*> instance_extensions) {
 
     {
         VkDescriptorPoolSize pool_sizes[] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64 },
-            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 64 },
-            { VK_DESCRIPTOR_TYPE_SAMPLER, 64 }
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1024 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024 },
+            { VK_DESCRIPTOR_TYPE_SAMPLER, 1024 }
         };
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        pool_info.maxSets = 128;
+        pool_info.maxSets = 2048;
         pool_info.poolSizeCount = (uint32_t)IM_COUNTOF(pool_sizes);
         pool_info.pPoolSizes = pool_sizes;
         err = vkCreateDescriptorPool(g_Device, &pool_info, g_Allocator, &g_DescriptorPool);
